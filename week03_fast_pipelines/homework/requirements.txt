@@ -17,3 +17,4 @@ gdown==4.7.3
 matplotlib==3.8.2
 pytest==8.3.5
 wandb==0.19.8
+hydra-core==1.3

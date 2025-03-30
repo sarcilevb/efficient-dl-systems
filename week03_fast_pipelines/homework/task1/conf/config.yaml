@@ -1,0 +1,3 @@
+defaults:
+  - amp: no_amp
+  - wandb: log_all

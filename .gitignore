@@ -134,3 +134,5 @@ dmypy.json
 # hw3
 week03_fast_pipelines/homework/task1/data
 week03_fast_pipelines/homework/w3_hw
+week03_fast_pipelines/homework/task1/outputs
+week03_fast_pipelines/homework/task1/wandb
