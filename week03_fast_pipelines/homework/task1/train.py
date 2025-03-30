@@ -1,10 +1,14 @@
+from contextlib import nullcontext
+
 import torch
+import torch.amp
+import torch.utils.data
+
+from dataset import get_train_data
 from torch import nn
 from tqdm.auto import tqdm
 
 from unet import Unet
-
-from dataset import get_train_data
 
 
 def train_epoch(
@@ -13,6 +17,7 @@ def train_epoch(
     criterion: torch.nn.modules.loss._Loss,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
+    amp: bool = False,
 ) -> None:
     model.train()
 
@@ -21,14 +26,22 @@ def train_epoch(
         images = images.to(device)
         labels = labels.to(device)
 
-        with torch.amp.autocast(device.type, dtype=torch.float16):
+        amp_context_maybe = torch.amp.autocast(device.type) if amp else nullcontext()
+        with amp_context_maybe:
             outputs = model(images)
             loss = criterion(outputs, labels)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
         # TODO: your code for loss scaling here
 
         accuracy = ((outputs > 0.5) == labels).float().mean()
 
-        pbar.set_description(f"Loss: {round(loss.item(), 4)} " f"Accuracy: {round(accuracy.item() * 100, 4)}")
+        pbar.set_description(
+            f"Loss: {round(loss.item(), 4)} "
+            f"Accuracy: {round(accuracy.item() * 100, 4)}"
+        )
 
 
 def train():
@@ -41,4 +54,8 @@ def train():
 
     num_epochs = 5
     for epoch in range(0, num_epochs):
-        train_epoch(train_loader, model, criterion, optimizer, device=device)
+        train_epoch(train_loader, model, criterion, optimizer, device=device, amp=False)
+
+
+if __name__ == "__main__":
+    train()
