@@ -1,4 +1,5 @@
 from contextlib import nullcontext
+from typing import Iterator
 
 import torch
 import torch.amp
@@ -31,10 +32,14 @@ def train_epoch(
             outputs = model(images)
             loss = criterion(outputs, labels)
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
         # TODO: your code for loss scaling here
+        if amp:
+            loss = loss.to(torch.float32) * 1024
+        optimizer.zero_grad()
+        loss.backward()
+        if amp:
+            _reverse_gradient_scaling(model.parameters())
+        optimizer.step()
 
         accuracy = ((outputs > 0.5) == labels).float().mean()
 
@@ -54,7 +59,13 @@ def train():
 
     num_epochs = 5
     for epoch in range(0, num_epochs):
-        train_epoch(train_loader, model, criterion, optimizer, device=device, amp=False)
+        train_epoch(train_loader, model, criterion, optimizer, device=device, amp=True)
+
+
+def _reverse_gradient_scaling(parameters: Iterator[torch.nn.Parameter]) -> None:
+    for p in parameters:
+        if p.grad is not None:
+            p.grad.data /= 1024
 
 
 if __name__ == "__main__":
