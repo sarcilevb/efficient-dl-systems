@@ -1,0 +1,4 @@
+enable: true
+loss_scaling: true
+scaler_type: static
+scaling_factor: 4096

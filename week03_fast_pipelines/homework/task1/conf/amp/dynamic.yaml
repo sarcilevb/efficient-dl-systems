@@ -1,0 +1,8 @@
+enable: true
+loss_scaling: true
+scaler_type: dynamic
+factor_upper_bound: 32_768
+factor_lower_bound: 2
+growth_factor: 2
+backoff_factor: 0.5
+growth_interval: 5
