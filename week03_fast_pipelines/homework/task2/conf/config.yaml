@@ -1,0 +1,12 @@
+defaults:
+  - loader: ultra_big_brain
+
+model:
+  embedding_dim: 1024
+  num_heads: 8
+  num_encoder_layers: 1
+  device: cuda:0
+
+data:
+  path: data/wikitext-103-raw-v1/
+  batch_size: 128
