@@ -1,9 +1,7 @@
 from collections import defaultdict
-from textwrap import wrap
-from typing import Callable, Dict, List, Optional, Tuple, Type
+from typing import Callable, Dict, List, Optional, Tuple
 
 import torch
-import transformers
 
 
 class OffloadContext:
@@ -25,14 +23,16 @@ class ModuleOffloading(torch.nn.Module):
 
         @staticmethod
         def backward(ctx, *grad_output):
-            ctx.module.schedule_offload()
+            if not (ctx.module in ctx.module_to_fetching_list_backward[0]):
+                ctx.module.schedule_offload()
             return None, grad_output
 
     class PostForward(torch.autograd.Function):
         @staticmethod
         def forward(ctx, module: "ModuleOffloading", *args):
             ctx.module = module
-            module.schedule_offload()
+            if not (ctx.module in ctx.module_to_fetching_list_forward[0]):
+                module.schedule_offload()
             return args if len(args) > 1 else args[0]
 
         @staticmethod
@@ -42,6 +42,7 @@ class ModuleOffloading(torch.nn.Module):
             return None, grad_output
 
     def __init__(self, module: torch.nn.Module, ctx: OffloadContext):
+        super().__init__()
         self.module = module
         self.ctx = ctx
         self.load_future: Optional[torch.cuda.Event] = None
@@ -54,6 +55,7 @@ class ModuleOffloading(torch.nn.Module):
     def schedule_load(self):
         load_future = self._move(self.ctx.cuda_device)
         self.load_future = load_future
+        return load_future
 
     def schedule_offload(self):
         self._move("cpu")
@@ -62,12 +64,13 @@ class ModuleOffloading(torch.nn.Module):
         if self.load_future is not None:
             # pyright: ignore[reportArgumentType]
             torch.cuda.default_stream().wait_event(self.load_future)
+            self.load_future = None
 
     def _move(self, device: str) -> torch.cuda.Event:
         with torch.cuda.stream(self.ctx.cuda_io_stream):
-            for parameter in self.module.parameters():
+            for parameter in self.module.parameters(recurse=False):
                 parameter.data = parameter.data.to(device, non_blocking=True)
-            for buffer in self.module.buffers():
+            for buffer in self.module.buffers(recurse=False):
                 buffer.data = buffer.data.to(device, non_blocking=True)
             # pyright: ignore[reportAssignmentType]
             load_future: torch.cuda.Event = torch.cuda.Event()
@@ -110,6 +113,8 @@ class Offloading(torch.nn.Module):
         self.backward_load_order = self._prepare_load_order(backward_load_order)
         context.module_to_fetching_list_forward = self.forward_load_order
         context.module_to_fetching_list_backward = self.backward_load_order
+
+        self._prepare_move_to_device()
 
     def forward(self, x):
         return self.model(x)
@@ -225,8 +230,28 @@ class Offloading(torch.nn.Module):
         result = {}
         for chunk, next_chunk in zip(load_chunks, load_chunks[1:]):
             result[id(chunk[0])] = [module_id_to_wrapped[id(m)] for m in next_chunk]
+        result[-1] = [module_id_to_wrapped[id(m)] for m in load_chunks[0]]
 
         return result
+
+    def _prepare_move_to_device(self):
+        first_chunk_module_ids = set(
+            [id(m.module) for m in self.forward_load_order[-1]]
+        )
+        print("Chunk ids: ", first_chunk_module_ids)
+        for module in self.modules():
+            module = module.to(f"cuda:{self.cuda_device_idx}")
+
+        for name, module in self.named_modules():
+            if isinstance(module, ModuleOffloading):
+                print(
+                    name, id(module.module), id(module.module) in first_chunk_module_ids
+                )
+            if isinstance(module, ModuleOffloading) and not (
+                id(module.module) in first_chunk_module_ids
+            ):
+                print("Scheduling offload for", name, id(module.module), "not in first")
+                module.schedule_offload()
 
 
 def _schedule_prefetch(module: ModuleOffloading, forward: bool):
