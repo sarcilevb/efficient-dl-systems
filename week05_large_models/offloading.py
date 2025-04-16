@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import torch
 
@@ -9,6 +9,8 @@ class OffloadContext:
         self.cuda_device = cuda_device
         self.module_to_fetching_list_forward: Dict[int, List[ModuleOffloading]] = {}
         self.module_to_fetching_list_backward: Dict[int, List[ModuleOffloading]] = {}
+        self.first_forward_module_ids: Set[int] = set()
+        self.first_backward_module_ids: Set[int] = set()
         self.cuda_io_stream: torch.cuda.Stream = torch.cuda.Stream()
 
 
@@ -19,27 +21,59 @@ class ModuleOffloading(torch.nn.Module):
             _schedule_prefetch(module, forward=True)
             module.wait_until_loads()
             ctx.module = module
-            return args if len(args) > 1 else args[0]
+
+            if len(args) == 1:
+                return args[0]
+            elif len(args) > 1:
+                return args
+            else:
+                return None
 
         @staticmethod
         def backward(ctx, *grad_output):
-            if not (ctx.module in ctx.module_to_fetching_list_backward[0]):
+            if not (
+                id(ctx.module.module) in ctx.module.ctx.first_backward_module_ids
+                or id(ctx.module.module) in ctx.module.ctx.first_forward_module_ids
+            ):
                 ctx.module.schedule_offload()
-            return None, grad_output
+
+            if len(grad_output) == 1:
+                out = grad_output[0]
+            elif len(grad_output) > 1:
+                out = grad_output
+            else:
+                out = None
+            return None, out
 
     class PostForward(torch.autograd.Function):
         @staticmethod
         def forward(ctx, module: "ModuleOffloading", *args):
             ctx.module = module
-            if not (ctx.module in ctx.module_to_fetching_list_forward[0]):
+            if not (
+                id(ctx.module.module) in ctx.module.ctx.first_backward_module_ids
+                or id(ctx.module.module) in ctx.module.ctx.first_forward_module_ids
+            ):
                 module.schedule_offload()
-            return args if len(args) > 1 else args[0]
+
+            if len(args) == 1:
+                return args[0]
+            elif len(args) > 1:
+                return args
+            else:
+                return None
 
         @staticmethod
         def backward(ctx, *grad_output):
             _schedule_prefetch(ctx.module, forward=False)
             ctx.module.wait_until_loads()
-            return None, grad_output
+
+            if len(grad_output) == 1:
+                out = grad_output[0]
+            elif len(grad_output) > 1:
+                out = grad_output
+            else:
+                out = None
+            return None, out
 
     def __init__(self, module: torch.nn.Module, ctx: OffloadContext):
         super().__init__()
@@ -49,6 +83,11 @@ class ModuleOffloading(torch.nn.Module):
 
     def forward(self, *fwd_args, **fwd_kwargs):
         fwd_args = ModuleOffloading.PreForward.apply(self, *fwd_args)
+        if fwd_args is None:
+            fwd_args = ()
+        elif not isinstance(fwd_args, tuple):
+            fwd_args = (fwd_args,)
+
         output = self.module(*fwd_args, **fwd_kwargs)
         return ModuleOffloading.PostForward.apply(self, output)
 
@@ -61,6 +100,13 @@ class ModuleOffloading(torch.nn.Module):
         self._move("cpu")
 
     def wait_until_loads(self):
+        own_params = list(self.module.parameters(recurse=False))
+        if (
+            self.load_future is None
+            and len(own_params) > 0
+            and own_params[0].data.device != f"cuda:{self.ctx.cuda_device}"
+        ):
+            self.schedule_load()
         if self.load_future is not None:
             # pyright: ignore[reportArgumentType]
             torch.cuda.default_stream().wait_event(self.load_future)
@@ -76,6 +122,18 @@ class ModuleOffloading(torch.nn.Module):
             load_future: torch.cuda.Event = torch.cuda.Event()
             load_future.record(self.ctx.cuda_io_stream)
         return load_future
+
+    def __getattr__(self, name):
+        # This is called ONLY if attribute not found normally
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            if name == "module":  # prevent recursion
+                raise AttributeError()
+            return getattr(self.module, name)
+
+    def __iter__(self):
+        return iter(self.module)
 
 
 class Offloading(torch.nn.Module):
@@ -104,15 +162,23 @@ class Offloading(torch.nn.Module):
         forward_load_order, backward_load_order = self._record_module_loading_order(
             _run_forward_backward
         )
+        print("Tracing done.")
 
         context = OffloadContext(f"cuda:{cuda_device_idx}")
         _wrap_all_submodules(
-            self.model, lambda module: ModuleOffloading(module, context)
+            self.model,
+            lambda module: (
+                ModuleOffloading(module, context)
+                if len(list(module.parameters(recurse=False))) > 0
+                else module
+            ),
         )
         self.forward_load_order = self._prepare_load_order(forward_load_order)
         self.backward_load_order = self._prepare_load_order(backward_load_order)
         context.module_to_fetching_list_forward = self.forward_load_order
         context.module_to_fetching_list_backward = self.backward_load_order
+        context.first_forward_module_ids = set((id(m) for m in forward_load_order[0]))
+        context.first_backward_module_ids = set((id(m) for m in backward_load_order[0]))
 
         self._prepare_move_to_device()
 
@@ -165,7 +231,6 @@ class Offloading(torch.nn.Module):
                     )
                     if param_size_gb > 0:
                         out.append((module, param_size_gb))
-                    print(module.__class__.__name__, param_size_gb)
 
             def __init__(self, module: torch.nn.Module):
                 super().__init__()
@@ -238,19 +303,17 @@ class Offloading(torch.nn.Module):
         first_chunk_module_ids = set(
             [id(m.module) for m in self.forward_load_order[-1]]
         )
-        print("Chunk ids: ", first_chunk_module_ids)
-        for module in self.modules():
-            module = module.to(f"cuda:{self.cuda_device_idx}")
+        for name, module in self.named_modules():
+            if len(list(module.parameters(recurse=False))) == 0:
+                continue
+            module.to(f"cuda:{self.cuda_device_idx}")
 
         for name, module in self.named_modules():
-            if isinstance(module, ModuleOffloading):
-                print(
-                    name, id(module.module), id(module.module) in first_chunk_module_ids
-                )
-            if isinstance(module, ModuleOffloading) and not (
-                id(module.module) in first_chunk_module_ids
+            if (
+                isinstance(module, ModuleOffloading)
+                and not (id(module.module) in first_chunk_module_ids)
+                and not name == "model.lm_head"
             ):
-                print("Scheduling offload for", name, id(module.module), "not in first")
                 module.schedule_offload()
 
 
@@ -260,7 +323,7 @@ def _schedule_prefetch(module: ModuleOffloading, forward: bool):
         if forward
         else module.ctx.module_to_fetching_list_backward
     )
-    next_modules_to_load = module_to_next_chunk[id(module.module)]
+    next_modules_to_load = module_to_next_chunk.get(id(module.module))
     if next_modules_to_load is not None:
         for module_to_load in next_modules_to_load:
             module_to_load.schedule_load()
