@@ -1,3 +1,4 @@
+import sys
 from collections import defaultdict
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
@@ -89,6 +90,7 @@ class ModuleOffloading(torch.nn.Module):
             fwd_args = (fwd_args,)
 
         output = self.module(*fwd_args, **fwd_kwargs)
+
         return ModuleOffloading.PostForward.apply(self, output)
 
     def schedule_load(self):
@@ -104,7 +106,7 @@ class ModuleOffloading(torch.nn.Module):
         if (
             self.load_future is None
             and len(own_params) > 0
-            and own_params[0].data.device != f"cuda:{self.ctx.cuda_device}"
+            and str(own_params[0].data.device) != self.ctx.cuda_device
         ):
             self.schedule_load()
         if self.load_future is not None:
@@ -144,7 +146,7 @@ class Offloading(torch.nn.Module):
         model: torch.nn.Module,
         sample_input: torch.Tensor,
         cuda_device_idx: int,
-        max_size_in_gb: int,
+        max_size_in_gb: float,
         prefetch: bool,
     ):
         super().__init__()
@@ -184,6 +186,9 @@ class Offloading(torch.nn.Module):
 
     def forward(self, x):
         return self.model(x)
+
+    def generate(self, *args, **kwargs):
+        return self.model.generate(*args, **kwargs)
 
     def _record_module_loading_order(
         self,
