@@ -6,14 +6,13 @@ from functools import partial
 from typing import Any, Callable, Dict, List, NoReturn, Optional, Tuple, Type, cast
 
 import torch
-import torch.distributed as dist
 import torch.nn as nn
 from torch.autograd import Variable
 from torch.autograd.profiler import record_function
 from torch.distributed._composable.fsdp._fsdp_param import ParamModuleInfo
 from torch.distributed._composable.fsdp._fsdp_param_group import _get_param_module_infos
 from torch.distributed.device_mesh import DeviceMesh, _get_device_handle
-from torch.distributed.tensor import DTensor, Shard
+from torch.distributed.tensor import DTensor, Shard, distribute_tensor
 from torch.distributed.tensor._dtensor_spec import DTensorSpec, TensorMeta
 from torch.utils._pytree import tree_flatten, tree_unflatten
 
@@ -50,6 +49,7 @@ class FSDPParam:
     sharded_param: nn.Parameter
     _unsharded_param: nn.Parameter
     _sharding_spec: DTensorSpec
+    _unsharded_buffer: torch.Tensor
 
     def __init__(
         self,
@@ -80,8 +80,11 @@ class FSDPParam:
         shard_rank = self.mesh.get_local_rank()
         shard_world_size = self.mesh.size(0)
         assert param.size(shard_dim) % shard_world_size == 0
-        # TODO: split param into shards, save local shard to `self.sharded_param`
-        # (make sharded param a `DTensor`)
+
+        local_param_shard = distribute_tensor(param, self.mesh, (self.fsdp_placement,))
+        self.sharded_param = nn.Parameter(local_param_shard.to_local(), requires_grad=param.requires_grad)
+        self._unsharded_buffer = torch.empty(0)
+        self._unsharded_param = nn.Parameter(self._unsharded_buffer, requires_grad=param.requires_grad)
 
         self._setattr_on_module(self.sharded_param)
         self.sharded_state = ShardedState.SHARDED
@@ -103,16 +106,17 @@ class FSDPParam:
 
     def to_sharded(self) -> None:
         self._setattr_on_module(self.sharded_param)
-        # TODO: free unsharded param
+        with torch.no_grad():
+            self._unsharded_buffer.storage().resize_(0)
         self.sharded_state = ShardedState.SHARDED
 
     def to_unsharded(self) -> None:
         # Assume that the data has been allocated and all-gathered
-        self._setattr_on_module(self.unsharded_param)
         self._unsharded_param = nn.Parameter(
-            self.unsharded_param.data,
-            requires_grad=self.unsharded_param.requires_grad,
+            self._unsharded_buffer.data,
+            requires_grad=self._unsharded_param.requires_grad,
         )
+        self._setattr_on_module(self._unsharded_param)
         self.sharded_state = ShardedState.UNSHARDED
 
     def _setattr_on_module(self, param: nn.Parameter) -> None:
@@ -120,12 +124,14 @@ class FSDPParam:
             self._module_info.module, self._module_info.param_name, param
         )
 
-    @property
-    def unsharded_param(self) -> nn.Parameter:  # ND
-        if not hasattr(self, "_unsharded_param"):
-            pass
-            # TODO: create unsharded param and save it to `self._unsharded_param`
-        return self._unsharded_param
+    # @property
+    # def unsharded_param(self) -> nn.Parameter:  # ND
+    #     if (not hasattr(self, "_unsharded_param")) or (self._unsharded_param.data is None):
+    #         if self._unsharded_buffer.storage().size() > 0:
+    #             self._unsharded_param = nn.Parameter(self._unsharded_buffer, requires_grad=self._unsharded_buffer.requires_grad)
+    #         else:
+    #             self._unsharded_param = nn.Parameter(torch.empty(0), requires_grad=False)
+    #     return self._unsharded_param
 
     def __repr__(self):
         return f"FSDPParam(fqn={self._param_fqn}, orig_size={self._orig_size})"
@@ -238,6 +244,7 @@ class FSDPModule:
     _reshard_after_forward: bool
     _all_gather_event: Optional[torch.Event]
     _post_reduce_event: Optional[torch.Event]
+    _backward_prefetch_module: Optional["FSDPModule"] = None
 
     def __new__(cls, *args, **kwargs):
         # Use index 2 since 0 is the dynamically constructed `FSDP<...>` class
@@ -252,14 +259,30 @@ class FSDPModule:
             return
         if self.is_unsharded:
             return  # no-op
+        torch.cuda.Event()
         with record_function(self.with_fqn("FSDP::all_gather")):
-            pass
-            # TODO: allocate unsharded param data
-            # TODO: all-gather sharded params into unsharded params
+            with torch.no_grad():
+                with torch.cuda.stream(self.comm_ctx.all_gather_stream):
+                    for fsdp_param in self.fsdp_params:
+                        sharded_param = fsdp_param.sharded_param
+                        world_size = fsdp_param.mesh.size(0)
+                        param_shape = fsdp_param.sharded_param.shape
+
+                        unsharded_shape = (param_shape[0] * world_size, *param_shape[1:])
+                        fsdp_param._unsharded_buffer.resize_(unsharded_shape)
+                        torch.distributed.all_gather_into_tensor(
+                            fsdp_param._unsharded_buffer,
+                            sharded_param,
+                            async_op=True,
+                        )
+                    self._all_gather_event = torch.cuda.Event()
+                    self._all_gather_event.record()
 
     def wait_for_unshard(self):
-        # TODO: wait for all-gather to complete
-        # TODO: set unsharded params on module
+        if self._all_gather_event is None:
+            return
+        torch.cuda.default_stream().wait_event(self._all_gather_event)
+        self._all_gather_event = None
         self._to_unsharded()
 
     def reshard(self):
@@ -270,6 +293,8 @@ class FSDPModule:
 
     def record_post_forward(self) -> None:
         post_forward_index = len(self.comm_ctx.post_forward_order)
+        if len(self.comm_ctx.post_forward_order) > 0:
+            self._backward_prefetch_module = self.comm_ctx.post_forward_order[-1]
         self.comm_ctx.post_forward_order.append(self)
         self._post_forward_indices.append(post_forward_index)
 
@@ -282,13 +307,16 @@ class FSDPModule:
             # gradient so the autograd backward did not run
             post_backward(self)
         self._training_state = TrainingState.IDLE
-        # TODO: wait for reduce-scatter to complete
+        if self._post_reduce_event is not None:
+            torch.cuda.default_stream().wait_event(self._post_reduce_event)
+            self._post_reduce_event = None
         self._post_forward_indices.clear()
         self.comm_ctx.post_forward_order.clear()
+        self._backward_prefetch_module = None
 
     def _backward_prefetch(self) -> None:
-        # TODO (task-3): explicitly prefetch the next module during backward
-        pass
+        if self._backward_prefetch_module is not None:
+            FSDPModule._prefetch_unshard(self._backward_prefetch_module)
 
     @staticmethod
     def _prefetch_unshard(target_fsdp_module: "FSDPModule") -> None:
@@ -379,9 +407,13 @@ def post_backward(module: FSDPModule):
     with record_function(module.with_fqn("FSDP::post_backward_reshard")):
         module.reshard()
     with record_function(module.with_fqn("FSDP::post_backward_reduce")):
-        pass
-        # TODO: reduce-scatter unsharded grads into sharded grads
-        # TODO: free unsharded grads
+        with torch.no_grad():
+            with torch.cuda.stream(module.comm_ctx.reduce_scatter_stream):
+                for fsdp_param in module.fsdp_params:
+                    torch.distributed.reduce_scatter_tensor(fsdp_param.sharded_param.grad, fsdp_param._unsharded_param.grad, async_op=True)
+                fsdp_param._unsharded_param.grad.storage().resize_(0)
+                module._post_reduce_event = torch.cuda.Event()
+                module._post_reduce_event.record()
 
 
 def register_pre_backward_hook(hook: Callable, output: Any) -> Any:
