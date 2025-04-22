@@ -11,8 +11,8 @@ from torch.autograd import Variable
 from torch.autograd.profiler import record_function
 
 # These work in PyTorch 2.3.1 specifically
-from torch.distributed._composable.fsdp._fsdp_param import ParamModuleInfo
-from torch.distributed._composable.fsdp._fsdp_param_group import _get_param_module_infos
+from torch.distributed.fsdp._fully_shard._fsdp_param import ParamModuleInfo
+from torch.distributed.fsdp._fully_shard._fsdp_param_group import _get_param_module_infos
 
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.device_mesh import _get_device_handle  # Still private but valid in 2.3.1
