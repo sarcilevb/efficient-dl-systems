@@ -8,7 +8,7 @@ from typing import Optional
 import fire
 import torch
 import torch.nn as nn
-from torch.distributed import DeviceMesh, init_device_mesh
+from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 from torch.optim.lr_scheduler import LambdaLR
 
 import torchtitan.utils as utils
