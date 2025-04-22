@@ -90,7 +90,7 @@ class FSDPParam:
 
         local_param_shard = distribute_tensor(param, self.mesh, (self.fsdp_placement,))
         self.sharded_param = nn.Parameter(local_param_shard.to_local(), requires_grad=param.requires_grad)
-        self._unsharded_buffer = torch.empty(0)
+        self._unsharded_buffer = torch.empty(0, device=self.sharded_param.device)
         self._unsharded_param = nn.Parameter(self._unsharded_buffer, requires_grad=param.requires_grad)
 
         self._setattr_on_module(self.sharded_param)
