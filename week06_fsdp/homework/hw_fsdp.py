@@ -449,7 +449,7 @@ def register_post_backward_hook(
             inp_tensors.append(obj)
     inp_tensors = RegisterPostBackwardFunction.apply(
         module,
-        *(fsdp_param.unsharded_param for fsdp_param in module.fsdp_params),
+        *(fsdp_param._unsharded_param for fsdp_param in module.fsdp_params),
         *inp_tensors,
     )
     unsharded_params, inp_tensors = (
