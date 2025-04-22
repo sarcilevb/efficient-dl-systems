@@ -9,11 +9,18 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 from torch.autograd.profiler import record_function
+
+# These work in PyTorch 2.3.1 specifically
 from torch.distributed._composable.fsdp._fsdp_param import ParamModuleInfo
 from torch.distributed._composable.fsdp._fsdp_param_group import _get_param_module_infos
-from torch.distributed.device_mesh import DeviceMesh, _get_device_handle
-from torch.distributed.tensor import DTensor, Shard, distribute_tensor
-from torch.distributed.tensor._dtensor_spec import DTensorSpec, TensorMeta
+
+from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.device_mesh import _get_device_handle  # Still private but valid in 2.3.1
+
+from torch.distributed._tensor import DTensor, distribute_tensor
+from torch.distributed._tensor.placement_types import Shard
+from torch.distributed._tensor import DTensorSpec, TensorMeta
+
 from torch.utils._pytree import tree_flatten, tree_unflatten
 
 cls_to_fsdp_cls: Dict[Type, Type] = {}
