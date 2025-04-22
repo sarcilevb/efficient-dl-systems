@@ -277,11 +277,12 @@ class FSDPModule:
 
                         unsharded_shape = (param_shape[0] * world_size, *param_shape[1:])
                         print(f"module {self._module_fqn}, unshard, world size {world_size}, param_shape {param_shape}, unsharded shape {unsharded_shape}")
-                        fsdp_param._unsharded_buffer.resize_(unsharded_shape)
+                        fsdp_param._unsharded_buffer = torch.empty(unsharded_shape, device=fsdp_param._unsharded_param.device)
+                        fsdp_param._unsharded_param = nn.Parameter(fsdp_param._unsharded_buffer, requires_grad=fsdp_param._unsharded_param.requires_grad)
                         torch.distributed.all_gather_into_tensor(
                             fsdp_param._unsharded_buffer,
                             sharded_param,
-                            async_op=False,
+                            async_op=True,
                         )
                     self._all_gather_event = torch.cuda.Event()
                     self._all_gather_event.record()
