@@ -19,7 +19,7 @@ from torch.distributed.device_mesh import _get_device_handle  # Still private bu
 
 from torch.distributed._tensor import DTensor, distribute_tensor
 from torch.distributed._tensor.placement_types import Shard
-from torch.distributed._tensor import DTensorSpec, TensorMeta
+from torch.distributed.tensor._dtensor_spec import DTensorSpec, TensorMeta
 
 from torch.utils._pytree import tree_flatten, tree_unflatten
 
