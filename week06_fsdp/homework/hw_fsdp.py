@@ -276,6 +276,7 @@ class FSDPModule:
                         param_shape = fsdp_param.sharded_param.shape
 
                         unsharded_shape = (param_shape[0] * world_size, *param_shape[1:])
+                        print(f"unshard, world size {world_size}, param_shape {param_shape}, unsharded shape {unsharded_shape}")
                         fsdp_param._unsharded_buffer.resize_(unsharded_shape)
                         torch.distributed.all_gather_into_tensor(
                             fsdp_param._unsharded_buffer,
