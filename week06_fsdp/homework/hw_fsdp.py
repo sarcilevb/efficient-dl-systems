@@ -399,6 +399,7 @@ def post_forward(module: FSDPModule, input: Any, output: Any):
 
 
 def pre_backward(module: FSDPModule, grad: torch.Tensor):
+    print(f"in pre-backward for {module._module_fqn}")
     module.register_post_backward_final_callback()
     logger.debug("%s", module.with_fqn("FSDP::pre_backward"))
     if module._training_state == TrainingState.PRE_BACKWARD:
