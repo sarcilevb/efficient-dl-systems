@@ -274,11 +274,6 @@ class FSDPModule:
                 with torch.cuda.stream(self.comm_ctx.all_gather_stream):
                     for fsdp_param in self.fsdp_params:
                         sharded_param = fsdp_param.sharded_param
-                        world_size = fsdp_param.mesh.size(0)
-                        param_shape = fsdp_param.sharded_param.shape
-
-                        unsharded_shape = (param_shape[0] * world_size, *param_shape[1:])
-                        print(f"rank {fsdp_param.mesh.get_local_rank()}, module {self._module_fqn}, unshard, world size {world_size}, param_shape {param_shape}, unsharded shape {unsharded_shape}, device {fsdp_param._unsharded_param.device}")
                         alloc_storage(fsdp_param._unsharded_buffer)
                         torch.distributed.all_gather_into_tensor(
                             fsdp_param._unsharded_buffer,
@@ -427,7 +422,7 @@ def post_backward(module: FSDPModule):
                 for fsdp_param in module.fsdp_params:
                     if not fsdp_param.sharded_param.requires_grad:
                         continue
-                    print(f"module {module._module_fqn}, param shape {fsdp_param.sharded_param.shape}, has grad {hasattr(fsdp_param.sharded_param, 'grad')}, requires grad {fsdp_param.sharded_param.requires_grad}")
+                    print(f"module {module._module_fqn}, param shape {fsdp_param.sharded_param.shape}, has grad {hasattr(fsdp_param.sharded_param, 'grad')}, requires grad {fsdp_param.sharded_param.requires_grad}, has unsharded param grad {hasattr(fsdp_param._unsharded_param, 'grad')}, state {fsdp_param.sharded_state}")
                     fsdp_param.sharded_param.grad = torch.empty_like(fsdp_param.sharded_param)
                     torch.distributed.reduce_scatter_tensor(fsdp_param.sharded_param.grad, fsdp_param._unsharded_param.grad, async_op=True)
                 fsdp_param._unsharded_param.grad.storage().resize_(0)
