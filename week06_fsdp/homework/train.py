@@ -18,6 +18,8 @@ from torchtitan.metrics import build_device_memory_monitor
 from torchtitan.models import model_name_to_cls, model_name_to_tokenizer, models_config
 from torchtitan.optimizer import linear_warmup_linear_decay
 
+torch.autograd.set_detect_anomaly(True)
+
 
 def trace_handler(prof, trace_dir: str):
     curr_trace_dir_name = "iteration_" + str(prof.step_num)
@@ -378,7 +380,8 @@ def train(
                     # pred.shape=(bs, seq_len, vocab_size)
                     # need to free to before bwd to avoid peaking memory
                     del pred
-                    loss.backward()
+                    with torch.autograd.detect_anomaly():
+                        loss.backward()
 
             # clip gradients
             grad_norm = torch.nn.utils.clip_grad_norm_(
