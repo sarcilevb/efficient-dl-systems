@@ -385,10 +385,6 @@ def pre_forward(module: FSDPModule, args: Tuple[Any, ...], kwargs: Dict[str, Any
 
 
 def post_forward(module: FSDPModule, input: Any, output: Any):
-    for i, t in enumerate(output):
-        if not torch.is_tensor(t) or not t.requires_grad:
-            continue
-        print("post forward hook time grad_fn:", t.grad_fn, id(t.grad_fn))
     # When composing with module-hook-based activation checkpointing, the
     # post-backward hook is responsible for the reshard
     if module._training_state == TrainingState.PRE_BACKWARD:
