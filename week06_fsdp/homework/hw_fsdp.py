@@ -424,9 +424,8 @@ def post_backward(module: FSDPModule):
         with torch.no_grad():
             with torch.cuda.stream(module.comm_ctx.reduce_scatter_stream):
                 for fsdp_param in module.fsdp_params:
-                    if not fsdp_param.sharded_param.requires_grad: # or not fsdp_param._unsharded_param.grad:
+                    if not fsdp_param.sharded_param.requires_grad or not fsdp_param._unsharded_param.grad:
                         continue
-                    # print(f"module {module._module_fqn}, param shape {fsdp_param.sharded_param.shape}, has grad {hasattr(fsdp_param.sharded_param, 'grad')}, requires grad {fsdp_param.sharded_param.requires_grad}, has unsharded param grad {hasattr(fsdp_param._unsharded_param, 'grad')}, type {type(fsdp_param._unsharded_param.grad)}, state {fsdp_param.sharded_state}")
                     fsdp_param.sharded_param.grad = torch.empty_like(fsdp_param.sharded_param)
                     torch.distributed.reduce_scatter_tensor(fsdp_param.sharded_param.grad, fsdp_param._unsharded_param.grad, async_op=True)
                 free_storage(fsdp_param._unsharded_param.grad)
@@ -486,13 +485,11 @@ class RegisterPostBackwardFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, module: FSDPModule, *inputs: torch.Tensor):
         # All tensors in `inputs` should require gradient
-        print(f"in forward for module {module._module_fqn}")
         ctx.module = module
         return inputs
 
     @staticmethod
     def backward(ctx, *grads: torch.Tensor):
-        print(f"in backward for module {ctx.module._module_fqn}")
         unsharded_param_grads, inp_grads = (
             grads[: len(ctx.module.fsdp_params)],
             grads[len(ctx.module.fsdp_params) :],
@@ -505,8 +502,6 @@ class RegisterPostBackwardFunction(torch.autograd.Function):
                     f"{fsdp_param._param_fqn} got unsharded during forward, but got no gradient after backward."
                 )
 
-            if ctx.module._module_fqn == "tok_embeddings":
-                print(f"in backward, grad is {type(unsharded_param_grad)}")
             fsdp_param._unsharded_param.grad = unsharded_param_grad
         post_backward(ctx.module)
         return (
