@@ -502,6 +502,7 @@ class RegisterPostBackwardFunction(torch.autograd.Function):
                 raise ValueError(
                     f"{fsdp_param._param_fqn} got unsharded during forward, but got no gradient after backward."
                 )
+            print(f"in module {ctx.module._module_fqn}")
             if ctx.module._module_fqn == "tok_embeddings":
                 print(f"in backward, grad is {type(unsharded_param_grad)}")
             fsdp_param._unsharded_param.grad = unsharded_param_grad
