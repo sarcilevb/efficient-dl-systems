@@ -371,7 +371,6 @@ def pre_forward(module: FSDPModule, args: Tuple[Any, ...], kwargs: Dict[str, Any
     if module._training_state == TrainingState.PRE_BACKWARD:
         return args, kwargs
     logger.debug("%s", module.with_fqn("FSDP::pre_forward"))
-    print(f"in pre_forward for {module._module_fqn}")
     with record_function(module.with_fqn("FSDP::pre_forward")):
         module._training_state = TrainingState.FORWARD
         module.unshard()
@@ -450,7 +449,6 @@ def register_post_backward_hook(
 ) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
     if not torch.is_grad_enabled():
         return args, kwargs
-    print(f"registering hook for {module._module_fqn}")
     args_list, args_spec = tree_flatten(args)
     kwargs_list, kwargs_spec = tree_flatten(kwargs)
     args_kwargs_list = list(args_list) + list(kwargs_list)
@@ -460,6 +458,7 @@ def register_post_backward_hook(
         if torch.is_tensor(obj) and obj.requires_grad:
             inp_tensor_indices.append(i)
             inp_tensors.append(obj)
+
     inp_tensors = RegisterPostBackwardFunction.apply(
         module,
         *(fsdp_param._unsharded_param for fsdp_param in module.fsdp_params),
@@ -487,6 +486,7 @@ class RegisterPostBackwardFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, module: FSDPModule, *inputs: torch.Tensor):
         # All tensors in `inputs` should require gradient
+        print(f"in forward for module {module._module_fqn}")
         ctx.module = module
         return inputs
 
@@ -496,7 +496,6 @@ class RegisterPostBackwardFunction(torch.autograd.Function):
             grads[: len(ctx.module.fsdp_params)],
             grads[len(ctx.module.fsdp_params) :],
         )
-        print(f"in module {ctx.module._module_fqn}")
         for fsdp_param, unsharded_param_grad in zip(
             ctx.module.fsdp_params, unsharded_param_grads, strict=True
         ):
