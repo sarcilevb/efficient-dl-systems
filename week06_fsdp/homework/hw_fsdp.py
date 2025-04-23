@@ -385,6 +385,7 @@ def pre_forward(module: FSDPModule, args: Tuple[Any, ...], kwargs: Dict[str, Any
 
 
 def post_forward(module: FSDPModule, input: Any, output: Any):
+    print(output.grad_fn)
     # When composing with module-hook-based activation checkpointing, the
     # post-backward hook is responsible for the reshard
     if module._training_state == TrainingState.PRE_BACKWARD:
@@ -439,6 +440,21 @@ def register_pre_backward_hook(hook: Callable, output: Any) -> Any:
     if not torch.is_grad_enabled():
         return output
     flat_outputs, _ = tree_flatten(output)
+    for i, t in enumerate(flat_outputs):
+        if not torch.is_tensor(t) or not t.requires_grad:
+            continue
+
+        fn = t.grad_fn
+        print("  grad_fn:", fn)                        # e.g. SumBackward0
+        print("  next_functions:", fn.next_functions)  # upstream nodes
+
+        # any saved‐for‐backward tensors will be in attributes named *_saved_*
+        saved = {k: getattr(fn, k) for k in fn.__dict__
+                 if k.startswith("_saved_")}
+        if saved:
+            print("  saved tensors:", saved)
+        else:
+            print("  (no Python‐visible saved attrs)")
     for t in flat_outputs:
         if torch.is_tensor(t) and t.requires_grad:
             t.register_hook(hook)
