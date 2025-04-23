@@ -396,7 +396,7 @@ def train(
             if step == 1 or step % log_freq == 0:
                 loss = loss.detach()
                 global_avg_loss = utils.dist_mean(loss, dp_mesh)
-                global_grad_norm = grad_norm.full_tensor().item()
+                global_grad_norm = grad_norm.item()
 
                 time_delta = time.perf_counter() - time_last_log
 
