@@ -425,6 +425,7 @@ def post_backward(module: FSDPModule):
         with torch.no_grad():
             with torch.cuda.stream(module.comm_ctx.reduce_scatter_stream):
                 for fsdp_param in module.fsdp_params:
+                    fsdp_param.sharded_param.grad = torch.empty_like(fsdp_param.sharded_param)
                     torch.distributed.reduce_scatter_tensor(fsdp_param.sharded_param.grad, fsdp_param._unsharded_param.grad, async_op=True)
                 fsdp_param._unsharded_param.grad.storage().resize_(0)
                 module._post_reduce_event = torch.cuda.Event()
