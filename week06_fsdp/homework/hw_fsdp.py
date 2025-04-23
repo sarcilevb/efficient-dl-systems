@@ -372,6 +372,7 @@ class FSDPModule:
 def pre_forward(module: FSDPModule, args: Tuple[Any, ...], kwargs: Dict[str, Any]):
     # When composing with module-hook-based activation checkpointing, the
     # the pre-backward hook is responsible for the unshard
+    print(f"module {module._module_fqn} pre-forward")
     if module._training_state == TrainingState.PRE_BACKWARD:
         return args, kwargs
     logger.debug("%s", module.with_fqn("FSDP::pre_forward"))
