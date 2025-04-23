@@ -500,7 +500,7 @@ class RegisterPostBackwardFunction(torch.autograd.Function):
                 raise ValueError(
                     f"{fsdp_param._param_fqn} got unsharded during forward, but got no gradient after backward."
                 )
-            print(f"module {ctx.module._module_fqn}, param shape {fsdp_param._unsharded_param.shape}, unsharded param grad {unsharded_param_grads}")
+            print(f"module {ctx.module._module_fqn}, param shape {fsdp_param._unsharded_param.shape}")
             fsdp_param._unsharded_param.grad = unsharded_param_grad
         post_backward(ctx.module)
         return (
