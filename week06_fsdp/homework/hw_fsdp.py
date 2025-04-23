@@ -419,6 +419,7 @@ def post_backward(module: FSDPModule):
             continue
     with record_function(module.with_fqn("FSDP::post_backward_reshard")):
         module.reshard()
+    print(f"in post backward {module._module_fqn}")
     with record_function(module.with_fqn("FSDP::post_backward_reduce")):
         with torch.no_grad():
             with torch.cuda.stream(module.comm_ctx.reduce_scatter_stream):
@@ -430,6 +431,7 @@ def post_backward(module: FSDPModule):
                     free_storage(fsdp_param._unsharded_param.grad)
                 module._post_reduce_event = torch.cuda.Event()
                 module._post_reduce_event.record()
+    print(f"done post backward {module._module_fqn}")
 
 
 def register_pre_backward_hook(hook: Callable, output: Any) -> Any:
@@ -500,7 +502,6 @@ class RegisterPostBackwardFunction(torch.autograd.Function):
                 raise ValueError(
                     f"{fsdp_param._param_fqn} got unsharded during forward, but got no gradient after backward."
                 )
-            print(f"module {ctx.module._module_fqn}, param shape {fsdp_param._unsharded_param.shape}")
             fsdp_param._unsharded_param.grad = unsharded_param_grad
         post_backward(ctx.module)
         return (

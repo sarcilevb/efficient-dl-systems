@@ -382,6 +382,7 @@ def train(
                     del pred
                     with torch.autograd.detect_anomaly():
                         loss.backward()
+                    print("got backward done")
 
             # clip gradients
             grad_norm = torch.nn.utils.clip_grad_norm_(
