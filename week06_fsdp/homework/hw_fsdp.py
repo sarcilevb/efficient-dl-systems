@@ -121,10 +121,10 @@ class FSDPParam:
 
     def to_unsharded(self) -> None:
         # Assume that the data has been allocated and all-gathered
-        self._unsharded_param = nn.Parameter(
-            self._unsharded_buffer.data,
-            requires_grad=self._unsharded_param.requires_grad,
-        )
+        # self._unsharded_param = nn.Parameter(
+        #     self._unsharded_buffer.data,
+        #     requires_grad=self._unsharded_param.requires_grad,
+        # )
         self._setattr_on_module(self._unsharded_param)
         self.sharded_state = ShardedState.UNSHARDED
 
@@ -467,6 +467,7 @@ def register_post_backward_hook(
     )
     for fsdp_param, unsharded_param in zip(module.fsdp_params, unsharded_params):
         unsharded_param._is_param = True
+        print(f"module {module._module_fqn}, unsharded param grad")
         fsdp_param._unsharded_param = cast(nn.Parameter, unsharded_param)
     if len(inp_tensors) == 0:
         return args, kwargs  # no tensors that require gradients
@@ -499,7 +500,7 @@ class RegisterPostBackwardFunction(torch.autograd.Function):
                 raise ValueError(
                     f"{fsdp_param._param_fqn} got unsharded during forward, but got no gradient after backward."
                 )
-            print(f"module {ctx.module._module_fqn}, param shape {fsdp_param._unsharded_param.shape}, unsharded param grad {unsharded_param_grads}")
+            # print(f"module {ctx.module._module_fqn}, param shape {fsdp_param._unsharded_param.shape}, unsharded param grad {unsharded_param_grads}")
             fsdp_param._unsharded_param.grad = unsharded_param_grad
         post_backward(ctx.module)
         return (
