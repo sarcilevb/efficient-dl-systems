@@ -315,10 +315,10 @@ class FSDPModule:
         if self._post_reduce_event is not None:
             torch.cuda.default_stream().wait_event(self._post_reduce_event)
             self._post_reduce_event = None
-            for p in self.fsdp_params:
-                print(f"param shape {p.sharded_param.shape}, gradient exists {hasattr(p.sharded_param, 'grad')}")
-                if hasattr(p.sharded_param, "grad"):
-                    print(f"grad shape {p.sharded_param.grad.shape}, grad {p.sharded_param.grad}")
+            # for p in self.fsdp_params:
+                # print(f"param shape {p.sharded_param.shape}, gradient exists {hasattr(p.sharded_param, 'grad')}")
+                # if hasattr(p.sharded_param, "grad"):
+                #     print(f"grad shape {p.sharded_param.grad.shape}, grad {p.sharded_param.grad}")
         self._post_forward_indices.clear()
         self.comm_ctx.post_forward_order.clear()
         self._backward_prefetch_module = None
@@ -499,7 +499,7 @@ class RegisterPostBackwardFunction(torch.autograd.Function):
                 raise ValueError(
                     f"{fsdp_param._param_fqn} got unsharded during forward, but got no gradient after backward."
                 )
-
+            print(f"module {ctx.module._module_fqn}, param shape {fsdp_param._unsharded_param.shape}, unsharded param grad {unsharded_param_grads}")
             fsdp_param._unsharded_param.grad = unsharded_param_grad
         post_backward(ctx.module)
         return (
