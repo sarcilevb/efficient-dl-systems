@@ -484,7 +484,6 @@ def register_post_backward_hook(
 class RegisterPostBackwardFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, module: FSDPModule, *inputs: torch.Tensor):
-        module._module_fqn
         # All tensors in `inputs` should require gradient
         ctx.module = module
         return inputs
@@ -495,6 +494,7 @@ class RegisterPostBackwardFunction(torch.autograd.Function):
             grads[: len(ctx.module.fsdp_params)],
             grads[len(ctx.module.fsdp_params) :],
         )
+        print(f"in module {ctx.module._module_fqn}")
         for fsdp_param, unsharded_param_grad in zip(
             ctx.module.fsdp_params, unsharded_param_grads, strict=True
         ):
@@ -502,7 +502,7 @@ class RegisterPostBackwardFunction(torch.autograd.Function):
                 raise ValueError(
                     f"{fsdp_param._param_fqn} got unsharded during forward, but got no gradient after backward."
                 )
-            print(f"in module {ctx.module._module_fqn}")
+
             if ctx.module._module_fqn == "tok_embeddings":
                 print(f"in backward, grad is {type(unsharded_param_grad)}")
             fsdp_param._unsharded_param.grad = unsharded_param_grad
