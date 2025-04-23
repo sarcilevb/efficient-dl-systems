@@ -315,6 +315,10 @@ class FSDPModule:
         if self._post_reduce_event is not None:
             torch.cuda.default_stream().wait_event(self._post_reduce_event)
             self._post_reduce_event = None
+            for p in self.fsdp_params:
+                print(f"param shape {p.sharded_param.shape}, gradient exists {hasattr(p.sharded_param, 'grad')}")
+                if hasattr(p.sharded_param, "grad"):
+                    print(f"grad shape {p.sharded_param.grad.shape}, grad {p.sharded_param.grad}")
         self._post_forward_indices.clear()
         self.comm_ctx.post_forward_order.clear()
         self._backward_prefetch_module = None
@@ -394,30 +398,24 @@ def post_forward(module: FSDPModule, input: Any, output: Any):
 
 
 def pre_backward(module: FSDPModule, grad: torch.Tensor):
-    print(f"in pre-backward for {module._module_fqn}")
     module.register_post_backward_final_callback()
     logger.debug("%s", module.with_fqn("FSDP::pre_backward"))
     if module._training_state == TrainingState.PRE_BACKWARD:
         return
     with record_function(module.with_fqn("FSDP::pre_backward")):
         module._training_state = TrainingState.PRE_BACKWARD
-        print("enter unshard")
         module.unshard()  # no-op if prefetched
-        print("exit unshard")
         module.wait_for_unshard()
-        print("exit wait unshard")
         # module._backward_prefetch()
     return grad
 
 
 def post_backward(module: FSDPModule):
-    print(f"in post-backward for {module._module_fqn}")
     logger.debug("%s", module.with_fqn("FSDP::post_backward"))
     module._training_state = TrainingState.POST_BACKWARD
     for fsdp_param in module.fsdp_params:
         if not fsdp_param.sharded_param.requires_grad:
             continue
-    print(f"module {module._module_fqn}, param shape {fsdp_param.sharded_param.shape}, has grad {hasattr(fsdp_param.sharded_param, 'grad')}, requires grad {fsdp_param.sharded_param.requires_grad}, has unsharded param grad {hasattr(fsdp_param._unsharded_param, 'grad')}, type {type(fsdp_param._unsharded_param.grad)}, state {fsdp_param.sharded_state}")
     with record_function(module.with_fqn("FSDP::post_backward_reshard")):
         module.reshard()
     with record_function(module.with_fqn("FSDP::post_backward_reduce")):
