@@ -115,7 +115,7 @@ class FSDPParam:
     def to_sharded(self) -> None:
         self._setattr_on_module(self.sharded_param)
         with torch.no_grad():
-            self._unsharded_buffer.storage().resize_(0)
+            self._unsharded_buffer.storage().resize_(1)
         self.sharded_state = ShardedState.SHARDED
 
     def to_unsharded(self) -> None:
