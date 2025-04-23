@@ -372,7 +372,8 @@ class FSDPModule:
 def pre_forward(module: FSDPModule, args: Tuple[Any, ...], kwargs: Dict[str, Any]):
     # When composing with module-hook-based activation checkpointing, the
     # the pre-backward hook is responsible for the unshard
-    print(f"module {module._module_fqn} pre-forward")
+    if len(module.fsdp_params) > 0 and module.fsdp_params[0].mesh.get_local_rank() == 0:
+        print(f"module {module._module_fqn} pre-forward")
     if module._training_state == TrainingState.PRE_BACKWARD:
         return args, kwargs
     logger.debug("%s", module.with_fqn("FSDP::pre_forward"))
@@ -399,7 +400,8 @@ def post_forward(module: FSDPModule, input: Any, output: Any):
 
 
 def pre_backward(module: FSDPModule, grad: torch.Tensor):
-    print(f"in pre backward {module._module_fqn}")
+    if len(module.fsdp_params) > 0 and module.fsdp_params[0].mesh.get_local_rank() == 0:
+        print(f"in pre backward {module._module_fqn}")
     module.register_post_backward_final_callback()
     logger.debug("%s", module.with_fqn("FSDP::pre_backward"))
     if module._training_state == TrainingState.PRE_BACKWARD:
@@ -420,7 +422,8 @@ def post_backward(module: FSDPModule):
             continue
     with record_function(module.with_fqn("FSDP::post_backward_reshard")):
         module.reshard()
-    print(f"in post backward {module._module_fqn}")
+    if len(module.fsdp_params) > 0 and module.fsdp_params[0].mesh.get_local_rank() == 0:
+        print(f"in post backward {module._module_fqn}")
     with record_function(module.with_fqn("FSDP::post_backward_reduce")):
         with torch.no_grad():
             with torch.cuda.stream(module.comm_ctx.reduce_scatter_stream):
@@ -432,7 +435,8 @@ def post_backward(module: FSDPModule):
                     free_storage(fsdp_param._unsharded_param.grad)
                 module._post_reduce_event = torch.cuda.Event()
                 module._post_reduce_event.record()
-    print(f"done post backward {module._module_fqn}")
+    if len(module.fsdp_params) > 0 and module.fsdp_params[0].mesh.get_local_rank() == 0:
+        print(f"done post backward {module._module_fqn}")
 
 
 def register_pre_backward_hook(hook: Callable, output: Any) -> Any:
