@@ -263,7 +263,7 @@ class FSDPModule:
                         torch.distributed.all_gather_into_tensor(
                             fsdp_param._unsharded_buffer,
                             sharded_param,
-                            async_op=True,
+                            async_op=False,
                         )
                     self._all_gather_event = torch.cuda.Event()
                     self._all_gather_event.record()
@@ -406,7 +406,7 @@ def post_backward(module: FSDPModule):
                     if not fsdp_param.sharded_param.requires_grad or fsdp_param._unsharded_param.grad is None:
                         continue
                     fsdp_param.sharded_param.grad = torch.empty_like(fsdp_param.sharded_param)
-                    torch.distributed.reduce_scatter_tensor(fsdp_param.sharded_param.grad, fsdp_param._unsharded_param.grad, async_op=True)
+                    torch.distributed.reduce_scatter_tensor(fsdp_param.sharded_param.grad, fsdp_param._unsharded_param.grad, async_op=False)
                     free_storage(fsdp_param._unsharded_param.grad)
                 module._post_reduce_event = torch.cuda.Event()
                 module._post_reduce_event.record()
