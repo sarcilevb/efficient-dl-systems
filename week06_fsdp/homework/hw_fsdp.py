@@ -269,6 +269,10 @@ class FSDPModule:
                     for fsdp_param in self.fsdp_params:
                         sharded_param = fsdp_param.sharded_param
                         alloc_storage(fsdp_param._unsharded_buffer)
+
+                        sharded_param.record_stream(self.comm_ctx.all_gather_stream)
+                        fsdp_param._unsharded_buffer.record_stream(self.comm_ctx.all_gather_stream)
+
                         torch.distributed.all_gather_into_tensor(
                             fsdp_param._unsharded_buffer,
                             sharded_param,
@@ -415,6 +419,9 @@ def post_backward(module: FSDPModule):
                     if not fsdp_param.sharded_param.requires_grad or fsdp_param._unsharded_param.grad is None:
                         continue
                     fsdp_param._unsharded_param.grad.record_stream(
+                        module.comm_ctx.reduce_scatter_stream
+                    )
+                    fsdp_param.sharded_param.record_stream(
                         module.comm_ctx.reduce_scatter_stream
                     )
                     fsdp_param.sharded_param.grad = torch.empty_like(fsdp_param.sharded_param)
