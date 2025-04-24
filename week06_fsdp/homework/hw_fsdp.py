@@ -421,10 +421,10 @@ def post_backward(module: FSDPModule):
                         async_op=True,
                     )
 
-                    def _wait_and_free():
-                        reduce_scatter_done_future.wait()  # blocks only this tiny thread
-                        free_storage(fsdp_param._unsharded_param.grad)  # safe now
-                    threading.Thread(target=_wait_and_free, daemon=True).start()
+                    def _wait_and_free(tensor, future):
+                        future.wait()  # blocks only this tiny thread
+                        free_storage(tensor)  # safe now
+                    threading.Thread(target=_wait_and_free, args=(fsdp_param._unsharded_param.grad, reduce_scatter_done_future), daemon=True).start()
                     # free_grad_storage_synchronized(fsdp_param._unsharded_param, reduce_scatter_done_future)
 
                 module._post_reduce_event = torch.cuda.Event()
