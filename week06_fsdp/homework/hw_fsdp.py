@@ -276,7 +276,7 @@ class FSDPModule:
                         torch.distributed.all_gather_into_tensor(
                             fsdp_param._unsharded_buffer,
                             sharded_param,
-                            async_op=False,
+                            async_op=True,
                         )
                     self._all_gather_event = torch.cuda.Event()
                     self._all_gather_event.record()
