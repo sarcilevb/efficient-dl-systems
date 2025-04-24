@@ -400,7 +400,7 @@ def pre_backward(module: FSDPModule, grad: torch.Tensor):
         module._training_state = TrainingState.PRE_BACKWARD
         module.unshard()  # no-op if prefetched
         module.wait_for_unshard()
-        # module._backward_prefetch()
+        module._backward_prefetch()
     return grad
 
 
