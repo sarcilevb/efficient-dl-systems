@@ -420,6 +420,7 @@ def post_backward(module: FSDPModule):
                         fsdp_param._unsharded_param.grad,
                         async_op=True,
                     )
+                    reduce_scatter_done_future.wait()
 
                     # def _wait_and_free(tensor, future):
                     #     future.wait()  # blocks only this tiny thread
