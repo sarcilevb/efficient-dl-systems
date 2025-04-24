@@ -288,6 +288,7 @@ def train(
         f"({device_mem_stats.max_reserved_pct:.2f}%)"
     )
 
+    print(lr, type(lr))
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=lr,
