@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from functools import partial
 from typing import Any, Callable, Dict, List, NoReturn, Optional, Tuple, Type, cast
+import threading
 
 import torch
 import torch.nn as nn
@@ -140,6 +141,14 @@ def alloc_storage(tensor: torch.Tensor) -> None:
 def free_storage(tensor: torch.Tensor) -> None:
     if (storage := tensor.untyped_storage()).size() != 0:
         storage.resize_(0)
+
+def free_grad_storage_synchronized(tensor: torch.Tensor, work) -> None:
+    def _wait_and_free():
+        work.wait()
+        free_storage(tensor.grad)
+        tensor.grad = None
+    threading.Thread(target=_wait_and_free(), daemon=True).start()
+
 
 
 # NOTE: These bypass `nn.Module.__setattr__` checks, which incur non-trivial
@@ -406,8 +415,13 @@ def post_backward(module: FSDPModule):
                     if not fsdp_param.sharded_param.requires_grad or fsdp_param._unsharded_param.grad is None:
                         continue
                     fsdp_param.sharded_param.grad = torch.empty_like(fsdp_param.sharded_param)
-                    torch.distributed.reduce_scatter_tensor(fsdp_param.sharded_param.grad, fsdp_param._unsharded_param.grad, async_op=False)
-                    free_storage(fsdp_param._unsharded_param.grad)
+                    reduce_scatter_done_future = torch.distributed.reduce_scatter_tensor(
+                        fsdp_param.sharded_param.grad,
+                        fsdp_param._unsharded_param.grad,
+                        async_op=True,
+                    )
+                    free_grad_storage_synchronized(fsdp_param._unsharded_param, reduce_scatter_done_future)
+
                 module._post_reduce_event = torch.cuda.Event()
                 module._post_reduce_event.record()
 
