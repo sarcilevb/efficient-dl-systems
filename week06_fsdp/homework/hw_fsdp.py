@@ -265,7 +265,7 @@ class FSDPModule:
         torch.cuda.Event()
         with record_function(self.with_fqn("FSDP::all_gather")):
             with torch.no_grad():
-                with torch.cuda.stream(self.comm_ctx.all_gather_stream):
+                with torch.cuda.stream(torch.cuda.default_stream()):
                     for fsdp_param in self.fsdp_params:
                         sharded_param = fsdp_param.sharded_param
                         alloc_storage(fsdp_param._unsharded_buffer)
@@ -410,7 +410,7 @@ def post_backward(module: FSDPModule):
         module.reshard()
     with record_function(module.with_fqn("FSDP::post_backward_reduce")):
         with torch.no_grad():
-            with torch.cuda.stream(module.comm_ctx.reduce_scatter_stream):
+            with torch.cuda.stream(torch.cuda.default_stream()):
                 for fsdp_param in module.fsdp_params:
                     if not fsdp_param.sharded_param.requires_grad or fsdp_param._unsharded_param.grad is None:
                         continue
