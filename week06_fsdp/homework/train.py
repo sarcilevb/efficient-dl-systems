@@ -289,7 +289,6 @@ def train(
         f"({device_mem_stats.max_reserved_pct:.2f}%)"
     )
 
-    print(lr, type(lr))
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=lr,
@@ -341,6 +340,7 @@ def train(
             trace_handler, trace_dir=os.path.join(dump_folder, save_traces_folder)
         ),
         record_shapes=True,
+        with_stack=True,
     ) as torch_profiler:
         while step < training_steps:
             memory_profiler = MemoryProfiler(
