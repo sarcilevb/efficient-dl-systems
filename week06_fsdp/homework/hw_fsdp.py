@@ -143,11 +143,11 @@ def free_storage(tensor: torch.Tensor) -> None:
         storage.resize_(0)
 
 def free_grad_storage_synchronized(tensor: torch.Tensor, work) -> None:
-    def _wait_and_free():
-        work.wait()
-        free_storage(tensor.grad)
-        tensor.grad = None
-    threading.Thread(target=_wait_and_free(), daemon=True).start()
+    def _wait_and_free(tensor_: torch.Tensor, work_):
+        work_.wait()
+        free_storage(tensor_.grad)
+        tensor_.grad = None
+    threading.Thread(target=_wait_and_free, args=(tensor, work), daemon=True).start()
 
 
 
@@ -431,10 +431,10 @@ def post_backward(module: FSDPModule):
                         async_op=True,
                     )
 
-                    def _wait_and_free(tensor, future):
-                        future.wait()
-                        free_storage(tensor)
-                    threading.Thread(target=_wait_and_free, args=(fsdp_param._unsharded_param.grad, reduce_scatter_done_future), daemon=True).start()
+                    # def _wait_and_free(tensor, future):
+                    #     future.wait()
+                    #     free_storage(tensor)
+                    # threading.Thread(target=_wait_and_free, args=(fsdp_param._unsharded_param.grad, reduce_scatter_done_future), daemon=True).start()
                     free_grad_storage_synchronized(fsdp_param._unsharded_param, reduce_scatter_done_future)
 
                 module._post_reduce_event = torch.cuda.Event()
