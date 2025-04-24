@@ -379,7 +379,6 @@ def train(
                     # need to free to before bwd to avoid peaking memory
                     del pred
                     loss.backward()
-                    print("got backward done")
 
             # clip gradients
             grad_norm = torch.nn.utils.clip_grad_norm_(
