@@ -425,17 +425,17 @@ def post_backward(module: FSDPModule):
                         module.comm_ctx.reduce_scatter_stream
                     )
                     fsdp_param.sharded_param.grad = torch.empty_like(fsdp_param.sharded_param)
-                    torch.distributed.reduce_scatter_tensor(
+                    reduce_scatter_done_future = torch.distributed.reduce_scatter_tensor(
                         fsdp_param.sharded_param.grad,
                         fsdp_param._unsharded_param.grad,
-                        async_op=False,
+                        async_op=True,
                     )
 
-                    # def _wait_and_free(tensor, future):
-                    #     future.wait()  # blocks only this tiny thread
-                    #     free_storage(tensor)  # safe now
-                    # threading.Thread(target=_wait_and_free, args=(fsdp_param._unsharded_param.grad, reduce_scatter_done_future), daemon=True).start()
-                    # free_grad_storage_synchronized(fsdp_param._unsharded_param, reduce_scatter_done_future)
+                    def _wait_and_free(tensor, future):
+                        future.wait()
+                        free_storage(tensor)
+                    threading.Thread(target=_wait_and_free, args=(fsdp_param._unsharded_param.grad, reduce_scatter_done_future), daemon=True).start()
+                    free_grad_storage_synchronized(fsdp_param._unsharded_param, reduce_scatter_done_future)
 
                 module._post_reduce_event = torch.cuda.Event()
                 module._post_reduce_event.record()
