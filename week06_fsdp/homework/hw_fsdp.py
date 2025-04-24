@@ -1,6 +1,5 @@
 import contextlib
 import logging
-import os
 from dataclasses import dataclass
 from enum import Enum, auto
 from functools import partial
@@ -85,7 +84,6 @@ class FSDPParam:
             tensor_meta=TensorMeta(param.size(), param.stride(), param.dtype),
         )
         self._orig_size = param.size()
-        shard_rank = self.mesh.get_local_rank()
         shard_world_size = self.mesh.size(0)
         assert param.size(shard_dim) % shard_world_size == 0
 
@@ -121,10 +119,6 @@ class FSDPParam:
 
     def to_unsharded(self) -> None:
         # Assume that the data has been allocated and all-gathered
-        # self._unsharded_param = nn.Parameter(
-        #     self._unsharded_buffer.data,
-        #     requires_grad=self._unsharded_param.requires_grad,
-        # )
         self._setattr_on_module(self._unsharded_param)
         self.sharded_state = ShardedState.UNSHARDED
 
@@ -132,15 +126,6 @@ class FSDPParam:
         unsafe_setattr_param(
             self._module_info.module, self._module_info.param_name, param
         )
-
-    # @property
-    # def unsharded_param(self) -> nn.Parameter:  # ND
-    #     if (not hasattr(self, "_unsharded_param")) or (self._unsharded_param.data is None):
-    #         if self._unsharded_buffer.storage().size() > 0:
-    #             self._unsharded_param = nn.Parameter(self._unsharded_buffer, requires_grad=self._unsharded_buffer.requires_grad)
-    #         else:
-    #             self._unsharded_param = nn.Parameter(torch.empty(0), requires_grad=False)
-    #     return self._unsharded_param
 
     def __repr__(self):
         return f"FSDPParam(fqn={self._param_fqn}, orig_size={self._orig_size})"
@@ -278,7 +263,7 @@ class FSDPModule:
                         torch.distributed.all_gather_into_tensor(
                             fsdp_param._unsharded_buffer,
                             sharded_param,
-                            async_op=False,
+                            async_op=True,
                         )
                     self._all_gather_event = torch.cuda.Event()
                     self._all_gather_event.record()
@@ -421,7 +406,7 @@ def post_backward(module: FSDPModule):
                     if not fsdp_param.sharded_param.requires_grad or fsdp_param._unsharded_param.grad is None:
                         continue
                     fsdp_param.sharded_param.grad = torch.empty_like(fsdp_param.sharded_param)
-                    torch.distributed.reduce_scatter_tensor(fsdp_param.sharded_param.grad, fsdp_param._unsharded_param.grad, async_op=False)
+                    torch.distributed.reduce_scatter_tensor(fsdp_param.sharded_param.grad, fsdp_param._unsharded_param.grad, async_op=True)
                     free_storage(fsdp_param._unsharded_param.grad)
                 module._post_reduce_event = torch.cuda.Event()
                 module._post_reduce_event.record()
@@ -483,7 +468,6 @@ class RegisterPostBackwardFunction(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, *grads: torch.Tensor):
-        grads[0].detach()
         unsharded_param_grads, inp_grads = (
             grads[: len(ctx.module.fsdp_params)],
             grads[len(ctx.module.fsdp_params) :],
