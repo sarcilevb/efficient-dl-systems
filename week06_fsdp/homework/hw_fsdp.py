@@ -247,7 +247,7 @@ class FSDPModule:
     _reshard_after_forward: bool
     _all_gather_event: Optional[torch.Event]
     _post_reduce_event: Optional[torch.Event]
-    _backward_prefetch_module: Optional["FSDPModule"] = None
+    _backward_prefetch_module: List["FSDPModule"] = []
 
     def __new__(cls, *args, **kwargs):
         # Use index 2 since 0 is the dynamically constructed `FSDP<...>` class
@@ -297,7 +297,7 @@ class FSDPModule:
     def record_post_forward(self) -> None:
         post_forward_index = len(self.comm_ctx.post_forward_order)
         if len(self.comm_ctx.post_forward_order) > 0:
-            self._backward_prefetch_module = self.comm_ctx.post_forward_order[-1]
+            self._backward_prefetch_module.append(self.comm_ctx.post_forward_order[-1])
         self.comm_ctx.post_forward_order.append(self)
         self._post_forward_indices.append(post_forward_index)
 
@@ -315,11 +315,11 @@ class FSDPModule:
             self._post_reduce_event = None
         self._post_forward_indices.clear()
         self.comm_ctx.post_forward_order.clear()
-        self._backward_prefetch_module = None
+        self._backward_prefetch_module = []
 
     def _backward_prefetch(self) -> None:
-        if self._backward_prefetch_module is not None:
-            FSDPModule._prefetch_unshard(self._backward_prefetch_module)
+        if len(self._backward_prefetch_module) > 0:
+            FSDPModule._prefetch_unshard(self._backward_prefetch_module.pop())
 
     @staticmethod
     def _prefetch_unshard(target_fsdp_module: "FSDPModule") -> None:
@@ -431,10 +431,6 @@ def post_backward(module: FSDPModule):
                         async_op=True,
                     )
 
-                    # def _wait_and_free(tensor, future):
-                    #     future.wait()
-                    #     free_storage(tensor)
-                    # threading.Thread(target=_wait_and_free, args=(fsdp_param._unsharded_param.grad, reduce_scatter_done_future), daemon=True).start()
                     free_grad_storage_synchronized(fsdp_param._unsharded_param, reduce_scatter_done_future)
 
                 module._post_reduce_event = torch.cuda.Event()
