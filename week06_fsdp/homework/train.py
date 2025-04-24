@@ -138,6 +138,7 @@ def apply_fsdp(
         for layer_id, transformer_block in model.layers.items():
             fully_shard_module(transformer_block)
         fully_shard_module(model)
+        print(list(model.parameters())[0].device)
 
 
 def train(
