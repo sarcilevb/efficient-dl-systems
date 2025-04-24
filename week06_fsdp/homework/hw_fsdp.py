@@ -265,7 +265,7 @@ class FSDPModule:
         torch.cuda.Event()
         with record_function(self.with_fqn("FSDP::all_gather")):
             with torch.no_grad():
-                with torch.cuda.stream(torch.cuda.default_stream()):
+                with torch.cuda.stream(self.comm_ctx.all_gather_stream):
                     for fsdp_param in self.fsdp_params:
                         sharded_param = fsdp_param.sharded_param
                         alloc_storage(fsdp_param._unsharded_buffer)
