@@ -276,7 +276,7 @@ class FSDPModule:
                         torch.distributed.all_gather_into_tensor(
                             fsdp_param._unsharded_buffer,
                             sharded_param,
-                            async_op=True,
+                            async_op=False,
                         )
                     self._all_gather_event = torch.cuda.Event()
                     self._all_gather_event.record()
@@ -425,12 +425,11 @@ def post_backward(module: FSDPModule):
                         module.comm_ctx.reduce_scatter_stream
                     )
                     fsdp_param.sharded_param.grad = torch.empty_like(fsdp_param.sharded_param)
-                    reduce_scatter_done_future = torch.distributed.reduce_scatter_tensor(
+                    torch.distributed.reduce_scatter_tensor(
                         fsdp_param.sharded_param.grad,
                         fsdp_param._unsharded_param.grad,
-                        async_op=True,
+                        async_op=False,
                     )
-                    reduce_scatter_done_future.wait()
 
                     # def _wait_and_free(tensor, future):
                     #     future.wait()  # blocks only this tiny thread
