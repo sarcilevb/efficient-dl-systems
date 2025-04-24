@@ -315,10 +315,6 @@ class FSDPModule:
         if self._post_reduce_event is not None:
             torch.cuda.default_stream().wait_event(self._post_reduce_event)
             self._post_reduce_event = None
-            # for p in self.fsdp_params:
-                # print(f"param shape {p.sharded_param.shape}, gradient exists {hasattr(p.sharded_param, 'grad')}")
-                # if hasattr(p.sharded_param, "grad"):
-                #     print(f"grad shape {p.sharded_param.grad.shape}, grad {p.sharded_param.grad}")
         self._post_forward_indices.clear()
         self.comm_ctx.post_forward_order.clear()
         self._backward_prefetch_module = None
@@ -372,8 +368,6 @@ class FSDPModule:
 def pre_forward(module: FSDPModule, args: Tuple[Any, ...], kwargs: Dict[str, Any]):
     # When composing with module-hook-based activation checkpointing, the
     # the pre-backward hook is responsible for the unshard
-    if len(module.fsdp_params) > 0 and module.fsdp_params[0].mesh.get_local_rank() == 0:
-        print(f"module {module._module_fqn} pre-forward")
     if module._training_state == TrainingState.PRE_BACKWARD:
         return args, kwargs
     logger.debug("%s", module.with_fqn("FSDP::pre_forward"))
@@ -400,8 +394,6 @@ def post_forward(module: FSDPModule, input: Any, output: Any):
 
 
 def pre_backward(module: FSDPModule, grad: torch.Tensor):
-    if len(module.fsdp_params) > 0 and module.fsdp_params[0].mesh.get_local_rank() == 0:
-        print(f"in pre backward {module._module_fqn}")
     module.register_post_backward_final_callback()
     logger.debug("%s", module.with_fqn("FSDP::pre_backward"))
     if module._training_state == TrainingState.PRE_BACKWARD:
@@ -422,8 +414,6 @@ def post_backward(module: FSDPModule):
             continue
     with record_function(module.with_fqn("FSDP::post_backward_reshard")):
         module.reshard()
-    if len(module.fsdp_params) > 0 and module.fsdp_params[0].mesh.get_local_rank() == 0:
-        print(f"in post backward {module._module_fqn}")
     with record_function(module.with_fqn("FSDP::post_backward_reduce")):
         with torch.no_grad():
             with torch.cuda.stream(module.comm_ctx.reduce_scatter_stream):
@@ -435,24 +425,14 @@ def post_backward(module: FSDPModule):
                     free_storage(fsdp_param._unsharded_param.grad)
                 module._post_reduce_event = torch.cuda.Event()
                 module._post_reduce_event.record()
-    if len(module.fsdp_params) > 0 and module.fsdp_params[0].mesh.get_local_rank() == 0:
-        print(f"done post backward {module._module_fqn}")
-
 
 def register_pre_backward_hook(hook: Callable, output: Any) -> Any:
     if not torch.is_grad_enabled():
         return output
     flat_outputs, _ = tree_flatten(output)
-    for i, t in enumerate(flat_outputs):
-        if not torch.is_tensor(t) or not t.requires_grad:
-            continue
-        print("pre back hook time grad_fn:", t.grad_fn, id(t.grad_fn))
     for t in flat_outputs:
         if torch.is_tensor(t) and t.requires_grad:
-            def nhook(grad):
-                print("back time grad_fn:", t.grad_fn, id(t.grad_fn))
-                return hook(grad)
-            t.register_hook(nhook)
+            t.register_hook(hook)
     return output
 
 
@@ -503,6 +483,7 @@ class RegisterPostBackwardFunction(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, *grads: torch.Tensor):
+        grads[0].detach()
         unsharded_param_grads, inp_grads = (
             grads[: len(ctx.module.fsdp_params)],
             grads[len(ctx.module.fsdp_params) :],
@@ -514,6 +495,9 @@ class RegisterPostBackwardFunction(torch.autograd.Function):
                 raise ValueError(
                     f"{fsdp_param._param_fqn} got unsharded during forward, but got no gradient after backward."
                 )
+            unsharded_param = fsdp_param._unsharded_param
+            unsharded_param = unsharded_param.detach()
+            fsdp_param._unsharded_param = nn.Parameter(unsharded_param, requires_grad=fsdp_param._unsharded_param.requires_grad)
             fsdp_param._unsharded_param.grad = unsharded_param_grad
         post_backward(ctx.module)
         return (
