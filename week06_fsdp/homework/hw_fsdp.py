@@ -142,15 +142,6 @@ def free_storage(tensor: torch.Tensor) -> None:
     if (storage := tensor.untyped_storage()).size() != 0:
         storage.resize_(0)
 
-def free_grad_storage_synchronized(tensor: torch.Tensor, work) -> None:
-    def _wait_and_free(tensor_: torch.Tensor, work_):
-        work_.wait()
-        free_storage(tensor_.grad)
-        tensor_.grad = None
-    threading.Thread(target=_wait_and_free, args=(tensor, work), daemon=True).start()
-
-
-
 # NOTE: These bypass `nn.Module.__setattr__` checks, which incur non-trivial
 # CPU overhead, if the module did not override it. For FSDP, we know we do not
 # need those checks when transitioning between sharded/unsharded parameters.
@@ -418,23 +409,29 @@ def post_backward(module: FSDPModule):
         default_stream = torch.cuda.default_stream()
         with torch.no_grad():
             with torch.cuda.stream(module.comm_ctx.reduce_scatter_stream):
+                futures = []
                 for fsdp_param in module.fsdp_params:
                     if not fsdp_param.sharded_param.requires_grad or fsdp_param._unsharded_param.grad is None:
                         continue
 
+                    inp = fsdp_param._unsharded_param.grad.clone().detach()
+                    unsharded_grad_copy_event = torch.cuda.Event()
+                    unsharded_grad_copy_event.record()
                     with torch.cuda.stream(default_stream):
+                        unsharded_grad_copy_event.wait()
+                        free_storage(fsdp_param._unsharded_param.grad)
                         fsdp_param.sharded_param.grad = torch.empty_like(fsdp_param.sharded_param)
 
                     reduce_scatter_done_future = torch.distributed.reduce_scatter_tensor(
                         fsdp_param.sharded_param.grad,
-                        fsdp_param._unsharded_param.grad,
+                        inp,
                         async_op=True,
                     )
+                    futures.append(reduce_scatter_done_future)
+                    free_storage(inp)
 
-                    reduce_scatter_done_future.wait()
-                    with torch.cuda.stream(default_stream):
-                        free_storage(fsdp_param._unsharded_param.grad)
-
+                for future in futures:
+                    future.wait()
                 module._post_reduce_event = torch.cuda.Event()
                 module._post_reduce_event.record()
 
