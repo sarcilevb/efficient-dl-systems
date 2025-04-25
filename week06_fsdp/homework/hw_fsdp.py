@@ -262,22 +262,23 @@ class FSDPModule:
             return
         if self.is_unsharded:
             return  # no-op
-        torch.cuda.Event()
         with record_function(self.with_fqn("FSDP::all_gather")):
             with torch.no_grad():
                 with torch.cuda.stream(self.comm_ctx.all_gather_stream):
+                    gather_futures = []
                     for fsdp_param in self.fsdp_params:
                         sharded_param = fsdp_param.sharded_param
                         alloc_storage(fsdp_param._unsharded_buffer)
 
-                        sharded_param.record_stream(self.comm_ctx.all_gather_stream)
-                        fsdp_param._unsharded_buffer.record_stream(self.comm_ctx.all_gather_stream)
-
-                        torch.distributed.all_gather_into_tensor(
+                        future = torch.distributed.all_gather_into_tensor(
                             fsdp_param._unsharded_buffer,
                             sharded_param,
-                            async_op=False,
+                            async_op=True,
                         )
+                        gather_futures.append(future)
+
+                    for future in gather_futures:
+                        future.wait()
                     self._all_gather_event = torch.cuda.Event()
                     self._all_gather_event.record()
 
@@ -412,26 +413,27 @@ def post_backward(module: FSDPModule):
             continue
     with record_function(module.with_fqn("FSDP::post_backward_reshard")):
         module.reshard()
+
     with record_function(module.with_fqn("FSDP::post_backward_reduce")):
+        default_stream = torch.cuda.default_stream()
         with torch.no_grad():
-            with torch.cuda.stream(torch.cuda.default_stream()):
+            with torch.cuda.stream(module.comm_ctx.reduce_scatter_stream):
                 for fsdp_param in module.fsdp_params:
                     if not fsdp_param.sharded_param.requires_grad or fsdp_param._unsharded_param.grad is None:
                         continue
-                    fsdp_param._unsharded_param.grad.record_stream(
-                        module.comm_ctx.reduce_scatter_stream
-                    )
-                    fsdp_param.sharded_param.record_stream(
-                        module.comm_ctx.reduce_scatter_stream
-                    )
-                    fsdp_param.sharded_param.grad = torch.empty_like(fsdp_param.sharded_param)
+
+                    with torch.cuda.stream(default_stream):
+                        fsdp_param.sharded_param.grad = torch.empty_like(fsdp_param.sharded_param)
+
                     reduce_scatter_done_future = torch.distributed.reduce_scatter_tensor(
                         fsdp_param.sharded_param.grad,
                         fsdp_param._unsharded_param.grad,
                         async_op=True,
                     )
 
-                    free_grad_storage_synchronized(fsdp_param._unsharded_param, reduce_scatter_done_future)
+                    reduce_scatter_done_future.wait()
+                    with torch.cuda.stream(default_stream):
+                            free_storage(fsdp_param._unsharded_param.grad)
 
                 module._post_reduce_event = torch.cuda.Event()
                 module._post_reduce_event.record()
