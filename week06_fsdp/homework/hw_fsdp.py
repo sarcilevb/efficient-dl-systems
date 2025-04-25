@@ -417,7 +417,7 @@ def post_backward(module: FSDPModule):
     with record_function(module.with_fqn("FSDP::post_backward_reduce")):
         default_stream = torch.cuda.default_stream()
         with torch.no_grad():
-            with torch.cuda.stream(default_stream):
+            with torch.cuda.stream(module.comm_ctx.reduce_scatter_stream):
                 for fsdp_param in module.fsdp_params:
                     if not fsdp_param.sharded_param.requires_grad or fsdp_param._unsharded_param.grad is None:
                         continue
@@ -433,7 +433,7 @@ def post_backward(module: FSDPModule):
 
                     reduce_scatter_done_future.wait()
                     with torch.cuda.stream(default_stream):
-                            free_storage(fsdp_param._unsharded_param.grad)
+                        free_storage(fsdp_param._unsharded_param.grad)
 
                 module._post_reduce_event = torch.cuda.Event()
                 module._post_reduce_event.record()
